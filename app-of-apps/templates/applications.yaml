@@ -22,13 +22,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: {{ .wave | quote }}
     {{- if .notify }}
-    # Subskrypcja powiadomien webhooka "receiver" (bootstrap/argocd-notifications-config-patch.yaml).
-    notifications.argoproj.io/subscribe.tenant0-running.receiver: ""
-    notifications.argoproj.io/subscribe.tenant0-succeeded.receiver: ""
-    notifications.argoproj.io/subscribe.tenant0-failed.receiver: ""
-    notifications.argoproj.io/subscribe.tenant0-healthy.receiver: ""
-    notifications.argoproj.io/subscribe.tenant0-degraded.receiver: ""
-    # Druga usluga webhooka, "analyzer" (receiver/analyzer.py): te same triggery, osobny odbiorca.
+    # Subskrypcja powiadomien webhooka "analyzer" (receiver/analyzer.py, konfiguracja w argocd-notifications-cm).
     notifications.argoproj.io/subscribe.tenant0-running.analyzer: ""
     notifications.argoproj.io/subscribe.tenant0-succeeded.analyzer: ""
     notifications.argoproj.io/subscribe.tenant0-failed.analyzer: ""

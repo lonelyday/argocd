@@ -36,3 +36,4 @@ apps:
     path: apps/app11
     namespace: tenant0-app11
     retryLimit: 1
+    notify: true
