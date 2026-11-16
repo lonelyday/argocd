@@ -1,0 +1,104 @@
+# Stosowany RĘCZNIE na HUBIE (control plane), w namespace argocd:
+#   oc apply -f bootstrap/applicationset-tenant0.yaml
+#
+# Co robi: dla KAŻDEGO klastra z listy poniżej tworzy jedną Application
+# "tenant0-<klaster>" (parent / app-of-apps). Parent leży na hubie i renderuje
+# chart z katalogu "app-of-apps", który tworzy aplikacje podrzędne.
+# ApplicationSet sam NIE ustala kolejności aplikacji - robi to dopiero parent
+# (sync-wave na aplikacjach podrzędnych).
+#
+# Ten plik stosuje się raz (i przy dodaniu/usunięciu spoke'a). UPGRADE spoke'a
+# NIE wymaga zmiany tego pliku ani oc apply:
+#   1. zmień pliki w apps/, zatwierdź i wypchnij TAG (np. v7),
+#   2. zmień "version" w spokes/<klaster>.yaml, zatwierdź i wypchnij,
+#   3. parent przechodzi w OutOfSync (wykrycie do ok. 3 min lub hard refresh),
+#   4. uruchom sync parenta ręcznie (auto-sync parenta jest wyłączony):
+#      oc patch application tenant0-<klaster> -n argocd --type merge \
+#        -p '{"operation":{"initiatedBy":{"username":"manual"},"sync":{"revision":"main"}}}'
+#
+# Wymaga wcześniej na hubie:
+#   1. health check dla argoproj.io/Application (inaczej fale nie czekają na dzieci)
+#   2. oba spoke'i zarejestrowane w ArgoCD (sekrety z etykietą secret-type=cluster)
+#   3. zarejestrowane repo (sekret repozytorium), jeśli repo jest prywatne
+#
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: tenant0
+  namespace: argocd
+spec:
+  # Włącza składnię {{.cluster}}. "missingkey=error" przerywa render, gdy
+  # parametr nie istnieje, zamiast po cichu wstawić pusty tekst.
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+
+  generators:
+    # Generator "list": stała, jawna lista klastrów. Każdy element to jeden
+    # zestaw parametrów, a każdy zestaw daje jedną Application.
+    # Dodanie spoke'a = dopisanie elementu + plik spokes/<klaster>.yaml.
+    # Usunięcie elementu usuwa jego parenta.
+    #
+    # Wersja (TAG w repo śledzony przez aplikacje podrzędne) NIE jest tutaj.
+    # Leży w spokes/<klaster>.yaml i jest wczytywana przez helm.valueFiles poniżej.
+    # Każdy spoke ma własny plik, więc spoke'i podnosi się niezależnie.
+    - list:
+        elements:
+          # oc get secret -n argocd -l argocd.argoproj.io/secret-type=cluster -o jsonpath='{range .items[*]}{.data.name}{"\n"}{end}' | while read n; do echo "$n" | base64 -d; echo; done
+          # Spoke #1
+          # Nazwa musi być identyczna z polem "name" w sekrecie klastra
+          # i z nazwą pliku spokes/<nazwa>.yaml.
+          - cluster: spoke-vcluster-01
+          # (2/2): dokładna nazwa drugiego spoke'a w ArgoCD.
+          - cluster: spoke-vcluster-02
+
+  template:
+    metadata:
+      # Nazwa parenta, np. tenant0-spoke-1. Nazwa klastra musi być poprawną
+      # nazwą obiektu Kubernetes (małe litery, cyfry, '-').
+      name: 'tenant0-{{.cluster}}'
+      labels:
+        tenant0/cluster: '{{.cluster}}'
+    spec:
+      project: default
+      source:
+        # EDYTUJ (repo 1/2): adres repozytorium z tym katalogiem.
+        repoURL: https://github.com/lonelyday/argocd.git
+        # EDYTUJ (rewizja 1/2): gałąź lub tag.
+        targetRevision: main
+        # EDYTUJ (ścieżka): katalog z chartem parenta, liczony od korzenia repo.
+        # Jeśli "tenant0" jest korzeniem repo, zostaw "app-of-apps".
+        # Jeśli to podkatalog większego repo, wpisz "tenant0/app-of-apps".
+        path: app-of-apps
+        helm:
+          # Plik z wersją tego spoke'a (klucz "version"), ścieżka liczona od
+          # "path" powyżej, czyli spokes/ leży w korzeniu repo. Jeśli plik nie
+          # istnieje, parent kończy z ComparisonError. Plik musi być wypchnięty
+          # do "main" przed oc apply tego ApplicationSet.
+          valueFiles:
+            - '../spokes/{{.cluster}}.yaml'
+          parameters:
+            # Nazwa spoke'a. Chart wstawi ją do destination.name aplikacji podrzędnych.
+            - name: cluster
+              value: '{{.cluster}}'
+            # EDYTUJ (repo 2/2): musi być takie samo jak repoURL wyżej.
+            # Aplikacje podrzędne czytają manifesty z tego samego repo.
+            - name: repoURL
+              value: https://github.com/lonelyday/argocd.git
+            # Parametru "version" tu nie ma: pochodzi z valueFiles powyżej.
+            # To tag, który śledzą aplikacje podrzędne. NIE jest to rewizja
+            # parenta (ta zostaje "main" w source.targetRevision).
+      # Parent tworzy obiekty Application, a one muszą leżeć na hubie, w namespace
+      # z instancją ArgoCD. NIE wpisuj tu spoke'a - spoke trafia dopiero do
+      # destination.name aplikacji podrzędnych.
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: argocd
+      # Auto-sync parenta jest WYŁĄCZONY (enabled: false): zmiana wersji tylko
+      # robi parenta OutOfSync, a upgrade rusza dopiero po ręcznym triggerze
+      # (oc patch ... operation, patrz nagłówek). Włączenie (enabled: true)
+      # sprawi, że commit zmiany wersji sam uruchomi upgrade.
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+          enabled: false

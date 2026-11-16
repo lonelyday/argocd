@@ -1,0 +1,36 @@
+# Aplikacja testowa app11: hook PreSync (precheck.yaml) + zwykly Job w fazie Sync
+# (ten plik). Precheck rusza przed tym Jobem.
+#
+# Aby zasymulowac awarie, zmien "exit 0" na "exit 1".
+#
+# Job jest niezmienny: kolejny upgrade wymaga nowej nazwy (numer wersji w nazwie).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tenant0-app11-job-v25
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: job
+          image: registry.redhat.io/ubi9/ubi-minimal:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "$(date -u +%H:%M:%S) tenant0 app11 v25 JOB START"
+              sleep 20
+              echo "$(date -u +%H:%M:%S) tenant0 app11 v25 JOB END"
+              exit 0
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

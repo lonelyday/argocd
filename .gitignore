@@ -1,0 +1,25 @@
+# Smieci lokalne
+__pycache__/
+*.pyc
+*.log
+.DS_Store
+.idea/
+.vscode/
+
+# Narzedzia pomocnicze (nie sa czescia wdrozenia Argo CD)
+/argo-http-handler/
+/receiver/
+/docs/
+
+# Na razie wysylamy TYLKO app11 - pozostale aplikacje testowe pomijamy
+/apps/app1/
+/apps/app2/
+/apps/app3/
+/apps/app12/
+/apps/app13/
+
+# bootstrap: tylko ApplicationSet. Pozostale pliki sa pod operatora OpenShift
+# (CRD ArgoCD / NotificationsConfiguration), ktorego na k3s nie ma.
+/bootstrap/argocd-health-check.yaml
+/bootstrap/argocd-notifications-enable.yaml
+/bootstrap/argocd-notifications-config-patch.yaml

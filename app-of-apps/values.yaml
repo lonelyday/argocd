@@ -1,0 +1,38 @@
+# Wartosci ponizej sa DOMYSLNE, zeby "helm template" dzialal tez recznie.
+# Nadpisuje je ApplicationSet (bootstrap/applicationset-tenant0.yaml):
+#   - cluster, repoURL: helm.parameters,
+#   - version: plik spokes/<klaster>.yaml (helm.valueFiles).
+# Reczny test: helm template t app-of-apps -f spokes/spoke-vcluster-01.yaml \
+#   --set cluster=spoke-vcluster-01
+
+# Dokladna nazwa spoke'a w ArgoCD. Idzie do destination.name aplikacji podrzednych.
+cluster: spoke-1
+
+repoURL: https://github.com/lonelyday/argocd.git
+
+# Wersja upgrade'u = TAG w repo (np. v1, v2), nie galaz. Aplikacje podrzedne
+# sledza ten tag, wiec push do "main" ich nie rusza. Zmiana wersji (w pliku
+# spokes/<klaster>.yaml) zmienia ich spec, co robi parenta OutOfSync i pozwala
+# przejsc fale po recznym triggerze. Tag musi istniec w repo przed zmiana pliku.
+version: v1
+
+# Projekt ArgoCD aplikacji podrzednych.
+project: default
+
+# Aplikacje podrzedne, w kolejnosci wykonania. Kolejnosc wymusza "wave":
+# parent zastosuje kolejna fale dopiero, gdy aplikacja z poprzedniej bedzie Healthy.
+#   name      - czesc nazwy Application (pelna: tenant0-<cluster>-<name>)
+#   wave      - numer fali sync-wave
+#   path      - katalog z manifestami w repo (liczony od korzenia repo)
+#   namespace - namespace docelowy NA SPOKE'U
+#   retryLimit - OPCJONALNE: spec.syncPolicy.retry.limit tej aplikacji.
+#               Bez pola ArgoCD stosuje domyslne 5 (auto-sync).
+#   notify    - OPCJONALNE: true = subskrypcja powiadomien webhooka (adnotacje).
+apps:
+  # app11: aplikacja TESTOWA raportowania statusu (sukces/porazka):
+  # hook PreSync (precheck) + zwykly Job w fazie Sync + hook PostSync.
+  - name: app11
+    wave: 4
+    path: apps/app11
+    namespace: tenant0-app11
+    retryLimit: 1

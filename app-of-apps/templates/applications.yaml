@@ -1,0 +1,63 @@
+# Aplikacje podrzedne jednego spoke'a. Obiekty Application leza na HUBIE
+# (namespace argocd), a ich zasoby trafiaja na spoke przez
+# destination.name.
+#
+# Kolejnosc miedzy nimi wymusza sync-wave. Wymaga to wgranego na hubie health
+# checku dla argoproj.io/Application. Bez niego parent nie czeka na dzieci.
+#
+# Dzieci MUSZA miec automated sync. Bez niego zostaja w "waiting for first sync"
+# i parent czeka bez konca.
+#
+# Dzieci sledza TAG ($.Values.version, z spokes/<klaster>.yaml), a nie "main".
+# Dzieki temu push do "main" nie uruchamia ich w przypadkowej kolejnosci.
+# Zmiana version zmienia spec dzieci, wiec parent wchodzi w OutOfSync i dopiero
+# jego (reczny) sync przechodzi fale 1 -> 2 -> 3.
+{{- range .Values.apps }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tenant0-{{ $.Values.cluster }}-{{ .name }}
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ .wave | quote }}
+    {{- if .notify }}
+    # Subskrypcja powiadomien webhooka "receiver" (bootstrap/argocd-notifications-config-patch.yaml).
+    notifications.argoproj.io/subscribe.tenant0-running.receiver: ""
+    notifications.argoproj.io/subscribe.tenant0-succeeded.receiver: ""
+    notifications.argoproj.io/subscribe.tenant0-failed.receiver: ""
+    notifications.argoproj.io/subscribe.tenant0-healthy.receiver: ""
+    notifications.argoproj.io/subscribe.tenant0-degraded.receiver: ""
+    # Druga usluga webhooka, "analyzer" (receiver/analyzer.py): te same triggery, osobny odbiorca.
+    notifications.argoproj.io/subscribe.tenant0-running.analyzer: ""
+    notifications.argoproj.io/subscribe.tenant0-succeeded.analyzer: ""
+    notifications.argoproj.io/subscribe.tenant0-failed.analyzer: ""
+    notifications.argoproj.io/subscribe.tenant0-healthy.analyzer: ""
+    notifications.argoproj.io/subscribe.tenant0-degraded.analyzer: ""
+    {{- end }}
+  labels:
+    tenant0/cluster: {{ $.Values.cluster | quote }}
+    tenant0/app: {{ .name | quote }}
+spec:
+  project: {{ $.Values.project }}
+  source:
+    repoURL: {{ $.Values.repoURL }}
+    targetRevision: {{ $.Values.version }}
+    path: {{ .path }}
+  destination:
+    name: {{ $.Values.cluster }}
+    namespace: {{ .namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    {{- if hasKey . "retryLimit" }}
+    # Retry ArgoCD calej operacji synca TEJ aplikacji (nie pojedynczego hooka).
+    # limit: 0 = bez ponowien, -1 = bez limitu. Bez tego pola ArgoCD uzywa
+    # domyslnego limitu 5 dla auto-synca.
+    retry:
+      limit: {{ .retryLimit }}
+    {{- end }}
+{{- end }}

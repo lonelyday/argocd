@@ -1,0 +1,5 @@
+apiVersion: v2
+name: tenant0-app-of-apps
+description: Parent (app-of-apps) dla jednego spoke'a. Tworzy aplikacje podrzedne (prechecks, backup, upgrade) w kolejnosci sync-wave, sledzace tag z pola version.
+type: application
+version: 0.1.0

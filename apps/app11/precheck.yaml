@@ -1,0 +1,77 @@
+# Hooki PreSync aplikacji app11: dwa prechecki przed glownym Jobem (job.yaml).
+# Ruszaja PRZED synchronizacja zasobow fazy Sync. Kolejnosc miedzy nimi wymusza
+# sync-wave w obrebie fazy PreSync: precheck (fala 0), potem precheck-2 (fala 1).
+# Nazwy sa stale, bo BeforeHookCreation usuwa starego Joba przed utworzeniem
+# nowego.
+#
+# Aby zasymulowac awarie, zmien "exit 0" na "exit 1" w jednym z hookow.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tenant0-app11-precheck
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: precheck
+          image: registry.redhat.io/ubi9/ubi-minimal:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "$(date -u +%H:%M:%S) tenant0 app11 PRECHECK START"
+              sleep 15
+              echo "$(date -u +%H:%M:%S) tenant0 app11 PRECHECK END"
+              exit 0
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tenant0-app11-precheck-2
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: precheck
+          image: registry.redhat.io/ubi9/ubi-minimal:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "$(date -u +%H:%M:%S) tenant0 app11 PRECHECK-2 START"
+              sleep 15
+              echo "$(date -u +%H:%M:%S) tenant0 app11 PRECHECK-2 END"
+              exit 0
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
