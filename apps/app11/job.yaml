@@ -7,7 +7,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: tenant0-app11-job-v25
+  name: tenant0-app11-job-v26
 spec:
   backoffLimit: 0
   template:
@@ -23,9 +23,9 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              echo "$(date -u +%H:%M:%S) tenant0 app11 v25 JOB START"
+              echo "$(date -u +%H:%M:%S) tenant0 app11 v26 JOB START"
               sleep 20
-              echo "$(date -u +%H:%M:%S) tenant0 app11 v25 JOB END"
+              echo "$(date -u +%H:%M:%S) tenant0 app11 v26 JOB END"
               exit 0
           resources:
             requests: { cpu: 10m, memory: 16Mi }
