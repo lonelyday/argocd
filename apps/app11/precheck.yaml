@@ -31,7 +31,7 @@ spec:
           args:
             - |
               echo "$(date -u +%H:%M:%S) tenant0 app11 PRECHECK START"
-              sleep 15
+              sleep 10
               echo "$(date -u +%H:%M:%S) tenant0 app11 PRECHECK END"
               exit 0
           resources:
@@ -68,7 +68,7 @@ spec:
           args:
             - |
               echo "$(date -u +%H:%M:%S) tenant0 app11 PRECHECK-2 START"
-              sleep 15
+              sleep 10
               echo "$(date -u +%H:%M:%S) tenant0 app11 PRECHECK-2 END"
               exit 0
           resources:
