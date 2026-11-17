@@ -37,3 +37,9 @@ apps:
     namespace: tenant0-app11
     retryLimit: 1
     notify: true
+  - name: app13
+    wave: 6
+    path: apps/app13
+    namespace: tenant0-app13
+    retryLimit: 1
+    notify: true

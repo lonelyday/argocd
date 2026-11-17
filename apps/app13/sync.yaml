@@ -1,0 +1,38 @@
+# Aplikacja testowa app13: jedyny zasob to zwykly Job w fazie Sync (ten plik).
+# Aplikacja jest subskrybowana na powiadomienia (notify: true w values.yaml).
+#
+# v21: Job konczy sie "exit 0" (sukces) - start operacji przy health Degraded po awarii v20.
+# Kod wyjscia: oc get pod -n tenant0-app13 -o jsonpath='{..terminated.exitCode}'
+# Job jest niezmienny: kolejny upgrade wymaga nowej nazwy (numer wersji w nazwie).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tenant0-app13-sync-v31
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: sync
+          image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "$(date -u +%H:%M:%S) tenant0 app13 v31 SYNC START"
+              sleep 30
+              echo "$(date -u +%H:%M:%S) tenant0 app13 v31 SYNC END"
+              exit 0
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

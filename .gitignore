@@ -16,7 +16,6 @@ __pycache__/
 /apps/app2/
 /apps/app3/
 /apps/app12/
-/apps/app13/
 
 # bootstrap: tylko ApplicationSet. Pozostale pliki sa pod operatora OpenShift
 # (CRD ArgoCD / NotificationsConfiguration), ktorego na k3s nie ma.

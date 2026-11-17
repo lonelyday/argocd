@@ -30,7 +30,7 @@ spec:
               echo "$(date -u +%H:%M:%S) tenant0 app11 v30 POSTSYNC START"
               sleep 15
               echo "$(date -u +%H:%M:%S) tenant0 app11 v30 POSTSYNC END"
-              exit 1
+              exit 0
           resources:
             requests: { cpu: 10m, memory: 16Mi }
             limits: { cpu: 100m, memory: 64Mi }
