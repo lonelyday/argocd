@@ -1,13 +1,20 @@
-# Aplikacja testowa app11: hook PreSync (precheck.yaml) + zwykly Job w fazie Sync
-# (ten plik). Precheck rusza przed tym Jobem.
+# Aplikacja testowa app11: hook PreSync (precheck.yaml) + hook Sync (ten plik)
+# + hook PostSync (postsync.yaml).
 #
-# Aby zasymulowac awarie, zmien "exit 0" na "exit 1".
+# Job jest hookiem fazy Sync, wiec Argo tworzy go od nowa przy kazdym ponowieniu
+# operacji (BeforeHookCreation) i nazwa moze byc stala.
 #
-# Job jest niezmienny: kolejny upgrade wymaga nowej nazwy (numer wersji w nazwie).
+# Zachowanie: PIERWSZA proba konczy sie "exit 1", kazda kolejna "exit 0".
+# Numer proby zapisuje plik /state/attempt na PVC (pvc.yaml), bo pod jest za kazdym
+# razem nowy. Z retryLimit: 1 daje to: proba 0 = Failed, ponowienie = sukces.
+# Zeby miec zawsze sukces albo zawsze porazke, zmien warunek w skrypcie.
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: tenant0-app11-job-v33
+  name: tenant0-app11-job
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   backoffLimit: 0
   template:
@@ -17,6 +24,7 @@ spec:
         runAsNonRoot: true
         runAsUser: 1001
         runAsGroup: 1001
+        fsGroup: 1001
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -25,10 +33,18 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              echo "$(date -u +%H:%M:%S) tenant0 app11 v33 JOB START"
+              f=/state/attempt
+              n=$(cat $f 2>/dev/null || echo 0)
+              n=$((n+1))
+              echo "$n" > $f
+              echo "$(date -u +%H:%M:%S) tenant0 app11 v34 JOB START (attempt $n)"
               sleep 15
-              echo "$(date -u +%H:%M:%S) tenant0 app11 v33 JOB END"
-              exit 1
+              if [ "$n" -eq 1 ]; then
+                echo "$(date -u +%H:%M:%S) tenant0 app11 v34 JOB END (attempt $n) FAIL"
+                exit 1
+              fi
+              echo "$(date -u +%H:%M:%S) tenant0 app11 v34 JOB END (attempt $n) OK"
+              exit 0
           resources:
             requests: { cpu: 10m, memory: 16Mi }
             limits: { cpu: 100m, memory: 64Mi }
@@ -36,3 +52,10 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+          volumeMounts:
+            - name: state
+              mountPath: /state
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: app11-state-v34

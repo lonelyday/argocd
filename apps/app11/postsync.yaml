@@ -27,9 +27,9 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              echo "$(date -u +%H:%M:%S) tenant0 app11 v33 POSTSYNC START"
+              echo "$(date -u +%H:%M:%S) tenant0 app11 v34 POSTSYNC START"
               sleep 15
-              echo "$(date -u +%H:%M:%S) tenant0 app11 v33 POSTSYNC END"
+              echo "$(date -u +%H:%M:%S) tenant0 app11 v34 POSTSYNC END"
               exit 0
           resources:
             requests: { cpu: 10m, memory: 16Mi }

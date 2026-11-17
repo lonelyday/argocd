@@ -1,0 +1,15 @@
+# Licznik prob dla Joba z job.yaml. PVC przezywa ponowienie operacji (pod jest
+# tworzony od nowa, wiec emptyDir by sie zgubil).
+#
+# Nazwa zawiera numer wersji: nowy tag = nowe PVC = licznik od zera. Stare PVC
+# usuwa prune (to zwykly zasob, nie hook). Przy zmianie wersji zmien nazwe tutaj
+# i w job.yaml (claimName).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: app11-state-v34
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 8Mi
