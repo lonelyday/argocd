@@ -37,13 +37,13 @@ spec:
               n=$(cat $f 2>/dev/null || echo 0)
               n=$((n+1))
               echo "$n" > $f
-              echo "$(date -u +%H:%M:%S) tenant0 app11 v34 JOB START (attempt $n)"
+              echo "$(date -u +%H:%M:%S) tenant0 app11 v35 JOB START (attempt $n)"
               sleep 15
               if [ "$n" -eq 1 ]; then
-                echo "$(date -u +%H:%M:%S) tenant0 app11 v34 JOB END (attempt $n) FAIL"
+                echo "$(date -u +%H:%M:%S) tenant0 app11 v35 JOB END (attempt $n) FAIL"
                 exit 1
               fi
-              echo "$(date -u +%H:%M:%S) tenant0 app11 v34 JOB END (attempt $n) OK"
+              echo "$(date -u +%H:%M:%S) tenant0 app11 v35 JOB END (attempt $n) OK"
               exit 0
           resources:
             requests: { cpu: 10m, memory: 16Mi }
@@ -58,4 +58,4 @@ spec:
       volumes:
         - name: state
           persistentVolumeClaim:
-            claimName: app11-state-v34
+            claimName: app11-state-v35

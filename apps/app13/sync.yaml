@@ -7,7 +7,10 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: tenant0-app13-sync-v32
+  name: tenant0-app13-sync
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
   backoffLimit: 0
   template:
