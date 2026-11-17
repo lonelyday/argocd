@@ -30,9 +30,9 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              echo "$(date -u +%H:%M:%S) tenant0 app11 v32 PRECHECK START"
+              echo "$(date -u +%H:%M:%S) tenant0 app11 v33 PRECHECK START"
               sleep 10
-              echo "$(date -u +%H:%M:%S) tenant0 app11 v32 PRECHECK END"
+              echo "$(date -u +%H:%M:%S) tenant0 app11 v33 PRECHECK END"
               exit 0
           resources:
             requests: { cpu: 10m, memory: 16Mi }
@@ -67,9 +67,9 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              echo "$(date -u +%H:%M:%S) tenant0 app11 v32 PRECHECK-2 START"
+              echo "$(date -u +%H:%M:%S) tenant0 app11 v33 PRECHECK-2 START"
               sleep 10
-              echo "$(date -u +%H:%M:%S) tenant0 app11 v32 PRECHECK-2 END"
+              echo "$(date -u +%H:%M:%S) tenant0 app11 v33 PRECHECK-2 END"
               exit 0
           resources:
             requests: { cpu: 10m, memory: 16Mi }
