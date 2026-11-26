@@ -16,7 +16,7 @@ presync:
   sleepSeconds: 10
   # Exit code of the PreSync hook. 0 = success; any other value fails the operation
   # before the Sync phase starts (no Deployment is created or changed).
-  exitCode: 0
+  exitCode: 1
 
 postsync:
   # How many times the health check calls the Service before it gives up.
