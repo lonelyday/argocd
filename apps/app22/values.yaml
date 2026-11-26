@@ -2,7 +2,7 @@
 
 # Image of the httpd Deployment. Public Red Hat image (anonymous mirror, no pull secret).
 # Runs as the non-root user 1001.
-image: registry.access.redhat.com/ubi9/httpd-24:latest
+image: registry.access.redhat.com/ubi9/httpd-24
 
 # Number of httpd pods.
 replicas: 1

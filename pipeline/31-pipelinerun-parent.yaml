@@ -28,8 +28,9 @@ spec:
     - name: repo-url
       value: https://github.com/lonelyday/argocd.git
     # Git tag of the upgrade. It must contain app-of-apps-agent/, apps/app21 and apps/app22.
+    # v37 = working version, v38 = failure test (app21 uses an image that does not exist).
     - name: target-revision
-      value: v37
+      value: v38
     # Maximum time to wait for ALL waves.
     - name: wait-timeout-seconds
       value: "900"

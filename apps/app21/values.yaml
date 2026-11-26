@@ -3,10 +3,16 @@
 # Image used by the nginx Deployment AND by the PostSync health check (it contains curl).
 # Public Red Hat image (registry.redhat.io needs a pull secret, so the anonymous mirror is used).
 # Runs as the non-root user 1001 and listens on 8080.
-image: registry.access.redhat.com/ubi9/nginx-126:latest
+# v38 FAILURE TEST: this tag does not exist in the registry, so the pods end in ImagePullBackOff.
+# The last working value is registry.access.redhat.com/ubi9/nginx-126:latest (tag v37).
+image: registry.access.redhat.com/ubi9/nginx-126:v0-does-not-exist
 
 # Number of nginx pods.
 replicas: 1
+
+# Seconds after which a Deployment that makes no progress (e.g. ImagePullBackOff) is reported as failed:
+# Kubernetes sets Progressing=False and Argo CD marks the Deployment Degraded. The Kubernetes default is 600.
+progressDeadlineSeconds: 60
 
 presync:
   # Seconds the PreSync hook sleeps (simulated work).

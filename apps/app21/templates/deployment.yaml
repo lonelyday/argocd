@@ -9,7 +9,7 @@
 #   livenessProbe   restarts the container when nginx stops answering.
 #
 # VALUES THE USER MAY CONFIGURE
-#   replicas, image                          values.yaml.
+#   replicas, image, progressDeadlineSeconds values.yaml.
 #   probe timings (initialDelaySeconds,      how fast a problem is detected: detection time is
 #     periodSeconds, timeoutSeconds,         about periodSeconds x failureThreshold.
 #     failureThreshold)
@@ -25,6 +25,7 @@ metadata:
     tenant0/chart-version: {{ .Chart.Version | quote }}
 spec:
   replicas: {{ .Values.replicas }}
+  progressDeadlineSeconds: {{ .Values.progressDeadlineSeconds }}
   strategy:
     type: RollingUpdate
     rollingUpdate:

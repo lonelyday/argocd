@@ -8,5 +8,5 @@ apiVersion: v2
 name: tenant0-app21
 description: Test application app21 - one PreSync hook, one nginx Deployment with readiness, liveness and startup probes, and one PostSync hook that health-checks the Deployment.
 type: application
-version: 0.1.0
+version: 0.1.1
 appVersion: "1.26"
