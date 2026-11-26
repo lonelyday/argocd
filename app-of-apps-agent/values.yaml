@@ -24,7 +24,8 @@ project: default
 #   path       (required) directory with the chart/manifests in the repo.
 #   namespace  (required) target namespace ON THE SPOKE (created by CreateNamespace=true).
 #   revision   (optional) git revision of this child; default = .Values.version.
-#   retryLimit (optional) spec.syncPolicy.retry.limit; without it Argo CD uses its default (5).
+#   retryLimit (optional) spec.syncPolicy.retry.limit = how many times Argo CD repeats a failed sync of this child.
+#              Without it Argo CD uses its default (5). 0 = no retries, -1 = unlimited.
 #   notify     (optional) true = subscribe to the analyzer webhook (annotations).
 apps:
   # app21: PreSync hook + nginx Deployment + PostSync health check. Wave 0 = first.
@@ -32,10 +33,12 @@ apps:
     wave: 0
     path: apps/app21
     namespace: tenant0-app21
+    retryLimit: 1
     notify: true
   # app22: httpd Deployment. Wave 1 = starts only after app21 is Healthy.
   - name: app22
     wave: 1
     path: apps/app22
     namespace: tenant0-app22
+    retryLimit: 1
     notify: true

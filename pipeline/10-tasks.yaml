@@ -430,6 +430,9 @@ spec:
     - name: project
       description: Argo CD AppProject of the parent.
       default: default
+    - name: retry-limit
+      description: How many times Argo CD repeats a failed sync of the PARENT (it fails when a child is Degraded). 0 = no retries. Without a limit Argo CD uses 5.
+      default: "1"
   results:
     - name: started-at
       description: UTC timestamp taken before the parent was applied. The next task only accepts operations started after it.
@@ -456,6 +459,8 @@ spec:
           value: $(params.hub-namespace)
         - name: PROJECT
           value: $(params.project)
+        - name: RETRY_LIMIT
+          value: $(params.retry-limit)
       script: |
         #!/usr/bin/env python3
         import json, os, re, ssl, sys, time, urllib.error, urllib.request
@@ -471,6 +476,8 @@ spec:
         for var in ("PARENT_NAME", "AGENT_NAME", "HUB_NAMESPACE"):
             if not NAME_RE.match(os.environ[var]):
                 print("ERROR: invalid value of", var); sys.exit(1)
+        if not re.match(r"^[0-9]{1,3}$", os.environ["RETRY_LIMIT"]):
+            print("ERROR: retry-limit must be a number 0-999"); sys.exit(1)
         if not REV_RE.match(os.environ["TARGET_REVISION"]):
             print("ERROR: invalid target-revision"); sys.exit(1)
 
@@ -503,7 +510,10 @@ spec:
                 },
                 # selfHeal is off on purpose: the principal writes status/metadata of the children,
                 # and the parent must not fight with it.
-                "syncPolicy": {"automated": {"prune": True, "selfHeal": False}},
+                "syncPolicy": {
+                    "automated": {"prune": True, "selfHeal": False},
+                    "retry": {"limit": int(os.environ["RETRY_LIMIT"])},
+                },
             },
         }
         url = (
