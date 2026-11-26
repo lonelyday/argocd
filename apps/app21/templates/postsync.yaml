@@ -1,0 +1,70 @@
+# app21, PostSync hook: runs after the Sync phase has finished. It health-checks the nginx
+# Service: it calls GET <path> up to .Values.postsync.attempts times and exits 0 on the first
+# HTTP 200, or 1 when no attempt succeeded.
+#
+# Exit 1 makes the operation end as "Failed". The Deployment is then already deployed, so a
+# failed PostSync does not roll anything back (Argo CD does not roll back).
+#
+# The check runs after Argo CD finished the Sync phase, which for a Deployment means after its
+# pods are Ready; the retries only absorb the short delay of the Service endpoints.
+#
+# The name is fixed because BeforeHookCreation deletes the old Job before creating a new one.
+#
+# VALUES THE USER MAY CONFIGURE
+#   argocd.argoproj.io/hook: PostSync        run after the Sync phase.
+#   postsync.attempts / intervalSeconds / path   values.yaml.
+#   image                                    the nginx image on purpose: it contains curl.
+#   the URL                                  the Service DNS name in the namespace of the release.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tenant0-app21-postsync
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postsync
+          image: {{ .Values.image }}
+          command: ["/bin/sh", "-c"]
+          env:
+            - name: URL
+              value: http://tenant0-app21-nginx.{{ .Release.Namespace }}.svc{{ .Values.postsync.path }}
+            - name: ATTEMPTS
+              value: {{ .Values.postsync.attempts | quote }}
+            - name: INTERVAL
+              value: {{ .Values.postsync.intervalSeconds | quote }}
+          args:
+            - |
+              echo "$(date -u +%H:%M:%S) tenant0 app21 chart {{ .Chart.Version }} POSTSYNC START ${URL}"
+              i=1
+              while [ "$i" -le "$ATTEMPTS" ]; do
+                code="$(curl -s -o /dev/null -m 3 -w '%{http_code}' "$URL" || true)"
+                echo "$(date -u +%H:%M:%S) attempt $i/$ATTEMPTS -> HTTP ${code}"
+                if [ "$code" = "200" ]; then
+                  echo "$(date -u +%H:%M:%S) tenant0 app21 chart {{ .Chart.Version }} POSTSYNC END (healthy)"
+                  exit 0
+                fi
+                i=$((i+1))
+                sleep "$INTERVAL"
+              done
+              echo "$(date -u +%H:%M:%S) tenant0 app21 chart {{ .Chart.Version }} POSTSYNC END (UNHEALTHY)"
+              exit 1
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

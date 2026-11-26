@@ -1,0 +1,37 @@
+# app21, nginx configuration. Mounted read-only into the nginx container.
+#
+# Why a custom file: the stock nginx image has no content, so "GET /" returns 403 and cannot
+# serve as a probe target. This file defines:
+#   /healthz  always 200 "ok"  -> target of startup, readiness and liveness probes and of the
+#                                 PostSync health check
+#   /         200 text         -> the "application"
+# All temp paths point to /tmp, so the container can run with a read-only root filesystem.
+#
+# The label tenant0/chart-version carries the chart version on purpose. A change of
+# targetRevision alone does not start an Argo CD operation when the rendered manifests are
+# identical (see HANDOFF.md section 6), so every chart version changes at least this label.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tenant0-app21-nginx-conf
+  labels:
+    tenant0/chart-version: {{ .Chart.Version | quote }}
+data:
+  nginx.conf: |
+    worker_processes 1;
+    pid /tmp/nginx.pid;
+    error_log /dev/stderr info;
+    events { worker_connections 128; }
+    http {
+      access_log /dev/stdout;
+      client_body_temp_path /tmp/client_temp;
+      proxy_temp_path /tmp/proxy_temp;
+      fastcgi_temp_path /tmp/fastcgi_temp;
+      uwsgi_temp_path /tmp/uwsgi_temp;
+      scgi_temp_path /tmp/scgi_temp;
+      server {
+        listen 8080;
+        location /healthz { default_type text/plain; return 200 "ok\n"; }
+        location / { default_type text/plain; return 200 "tenant0 app21 nginx {{ .Chart.Version }}\n"; }
+      }
+    }

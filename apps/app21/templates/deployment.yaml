@@ -1,0 +1,107 @@
+# app21, the Sync phase: nginx Deployment and its Service.
+#
+# Probes (all three call GET /healthz on port 8080, defined in configmap.yaml):
+#   startupProbe    gives nginx up to failureThreshold x periodSeconds = 30 s to start. Until it
+#                   succeeds the other probes do not run.
+#   readinessProbe  decides whether the pod receives traffic from the Service. A failing pod is
+#                   removed from the Service endpoints but not restarted. The Deployment becomes
+#                   Healthy in Argo CD only when the pods are Ready.
+#   livenessProbe   restarts the container when nginx stops answering.
+#
+# VALUES THE USER MAY CONFIGURE
+#   replicas, image                          values.yaml.
+#   probe timings (initialDelaySeconds,      how fast a problem is detected: detection time is
+#     periodSeconds, timeoutSeconds,         about periodSeconds x failureThreshold.
+#     failureThreshold)
+#   strategy.rollingUpdate                   maxUnavailable 0 keeps the old pod until the new one is Ready.
+#   the checksum/nginx-conf annotation       restarts the pods when nginx.conf changes.
+#   the remaining security fields            non-root user 1001, read-only root filesystem, no capabilities.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tenant0-app21-nginx
+  labels:
+    app: tenant0-app21-nginx
+    tenant0/chart-version: {{ .Chart.Version | quote }}
+spec:
+  replicas: {{ .Values.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: tenant0-app21-nginx
+  template:
+    metadata:
+      labels:
+        app: tenant0-app21-nginx
+      annotations:
+        checksum/nginx-conf: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: nginx
+          image: {{ .Values.image }}
+          command: ["nginx", "-c", "/etc/nginx-conf/nginx.conf", "-g", "daemon off;"]
+          ports:
+            - name: http
+              containerPort: 8080
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            timeoutSeconds: 1
+            failureThreshold: 15
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 1
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx-conf
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: tenant0-app21-nginx-conf
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tenant0-app21-nginx
+  labels:
+    app: tenant0-app21-nginx
+spec:
+  selector:
+    app: tenant0-app21-nginx
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

@@ -1,0 +1,12 @@
+# app21: test application with one PreSync hook, one Deployment (nginx) and one PostSync hook.
+#
+# Order of an upgrade:
+#   PreSync  Job  tenant0-app21-presync   prints two lines and exits 0
+#   Sync     Deployment tenant0-app21-nginx (+ Service, ConfigMap with nginx.conf)
+#   PostSync Job  tenant0-app21-postsync  health-checks the nginx Service and exits 0 or 1
+apiVersion: v2
+name: tenant0-app21
+description: Test application app21 - one PreSync hook, one nginx Deployment with readiness, liveness and startup probes, and one PostSync hook that health-checks the Deployment.
+type: application
+version: 0.1.0
+appVersion: "1.26"

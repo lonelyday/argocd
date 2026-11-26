@@ -1,0 +1,24 @@
+# Values of the app21 chart. Edit them BEFORE the chart is deployed.
+
+# Image used by the nginx Deployment AND by the PostSync health check (it contains curl).
+# Public Red Hat image (registry.redhat.io needs a pull secret, so the anonymous mirror is used).
+# Runs as the non-root user 1001 and listens on 8080.
+image: registry.access.redhat.com/ubi9/nginx-126:latest
+
+# Number of nginx pods.
+replicas: 1
+
+presync:
+  # Seconds the PreSync hook sleeps (simulated work).
+  sleepSeconds: 10
+  # Exit code of the PreSync hook. 0 = success; any other value fails the operation
+  # before the Sync phase starts (no Deployment is created or changed).
+  exitCode: 0
+
+postsync:
+  # How many times the health check calls the Service before it gives up.
+  attempts: 12
+  # Pause between two attempts, in seconds.
+  intervalSeconds: 5
+  # HTTP path checked by the PostSync hook. /healthz is defined in the nginx ConfigMap.
+  path: /healthz
