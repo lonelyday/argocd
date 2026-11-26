@@ -1,0 +1,42 @@
+# Health check for argoproj.io/Application on the PLAIN Argo CD of the hub (no operator).
+# Same Lua code as bootstrap/argocd-health-check.yaml (that file is the operator variant).
+#
+# Why: Argo CD has no built-in health check for Application. Without it the parent does not wait
+# for its children, so sync waves of child Application objects are NOT honoured.
+# The check reads the status that the argocd-agent principal copies back from the spoke.
+#
+# Only one key of argocd-cm is set. Server-side apply with an own field manager leaves the other keys alone:
+#   kubectl --context k3s apply --server-side --field-manager=tenant0 -f bootstrap/argocd-cm-health-check.yaml
+# The controller reads the check at start, so restart it afterwards:
+#   kubectl --context k3s -n argocd rollout restart statefulset argocd-application-controller
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  resource.customizations.health.argoproj.io_Application: "hs = { status = \"Progressing\"\
+    , message = \"\" }\nif obj.status == nil then\n  hs.message = \"no status yet\"\
+    \n  return hs\nend\nlocal op = obj.status.operationState\nif op == nil then\n\
+    \  hs.message = \"waiting for first sync\"\n  return hs\nend\nif op.phase == \"\
+    Failed\" or op.phase == \"Error\" then\n  hs.status = \"Degraded\"\n  hs.message\
+    \ = \"Sync failed: \" .. (op.message or \"\")\n  return hs\nend\nif op.phase ~=\
+    \ \"Succeeded\" then\n  hs.message = \"Sync \" .. (op.phase or \"unknown\")\n\
+    \  return hs\nend\nif obj.status.sync == nil or obj.status.sync.status ~= \"Synced\"\
+    \ then\n  hs.message = \"not Synced\"\n  return hs\nend\n-- Zmiana spec.source.targetRevision\
+    \ (np. v1 -> v2) zostawia stary\n-- operationState \"Succeeded\". Bez tego porownania\
+    \ dziecko wygladaloby\n-- na Healthy jeszcze przed porownaniem nowej wersji.\n\
+    -- Porownujemy z sync.comparedTo (rewizja, z ktora kontroler ostatnio\n-- porownal\
+    \ stan), a NIE z operationState.syncResult. Gdy nowy tag nie\n-- zmienia manifestow\
+    \ dziecka, ArgoCD nie tworzy operacji i syncResult\n-- zostaje na starym tagu\
+    \ na zawsze, wiec dziecko wisialoby w Progressing.\nlocal wanted = obj.spec.source\
+    \ and obj.spec.source.targetRevision\nlocal compared = obj.status.sync.comparedTo\n\
+    \  and obj.status.sync.comparedTo.source\n  and obj.status.sync.comparedTo.source.targetRevision\n\
+    if wanted ~= nil and compared ~= nil and wanted ~= compared then\n  hs.message\
+    \ = \"waiting for comparison with \" .. wanted .. \" (compared \" .. compared\
+    \ .. \")\"\n  return hs\nend\nif obj.status.health ~= nil then\n  hs.status =\
+    \ obj.status.health.status\n  hs.message = obj.status.health.message or \"\"\n\
+    end\nreturn hs\n"

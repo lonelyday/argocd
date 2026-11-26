@@ -1,0 +1,107 @@
+# app22, the Sync phase: httpd Deployment and its Service. There are no hooks.
+#
+# Probes (all three call GET /healthz on port 8080, served from the ConfigMap):
+#   startupProbe    gives httpd up to failureThreshold x periodSeconds = 30 s to start.
+#   readinessProbe  decides whether the pod receives traffic; Argo CD marks the Deployment
+#                   Healthy only when the pods are Ready.
+#   livenessProbe   restarts the container when httpd stops answering.
+#
+# VALUES THE USER MAY CONFIGURE
+#   replicas, image                          values.yaml.
+#   probe timings                            detection time is about periodSeconds x failureThreshold.
+#   strategy.rollingUpdate                   maxUnavailable 0 keeps the old pod until the new one is Ready.
+#   the checksum/httpd-conf annotation       restarts the pods when the ConfigMap changes.
+#   the remaining security fields            non-root user 1001, read-only root filesystem, no capabilities.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tenant0-app22-httpd
+  labels:
+    app: tenant0-app22-httpd
+    tenant0/chart-version: {{ .Chart.Version | quote }}
+spec:
+  replicas: {{ .Values.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: tenant0-app22-httpd
+  template:
+    metadata:
+      labels:
+        app: tenant0-app22-httpd
+      annotations:
+        checksum/httpd-conf: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: httpd
+          image: {{ .Values.image }}
+          command: ["httpd", "-f", "/etc/httpd-conf/httpd.conf", "-DFOREGROUND"]
+          ports:
+            - name: http
+              containerPort: 8080
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            timeoutSeconds: 1
+            failureThreshold: 15
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 1
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: conf
+              mountPath: /etc/httpd-conf/httpd.conf
+              subPath: httpd.conf
+              readOnly: true
+            - name: conf
+              mountPath: /etc/httpd-www
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: conf
+          configMap:
+            name: tenant0-app22-httpd-conf
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tenant0-app22-httpd
+  labels:
+    app: tenant0-app22-httpd
+spec:
+  selector:
+    app: tenant0-app22-httpd
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

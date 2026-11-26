@@ -1,0 +1,10 @@
+# Parent (app-of-apps) for the argocd-agent architecture: hub with application-controller + principal,
+# spoke with agent. The old chart app-of-apps/ (ApplicationSet-based, plain Argo CD) is left untouched.
+#
+# version = appVersion = the "revision" the parent Application tracks (keep them consistent).
+apiVersion: v2
+name: tenant0-app-of-apps-agent
+description: Parent Application chart. Creates the child Applications on the hub in sync-wave order; every child is routed to the agent by spec.destination.name.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

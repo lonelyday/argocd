@@ -1,0 +1,529 @@
+# Task "argocd-activate": creates or updates the Argo CD Application on the hub.
+# The argocd-agent principal then forwards it to the agent on the spoke.
+# Idempotent: uses server-side apply, so re-running with the same params is safe.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: argocd-activate
+  namespace: tenant0-pipeline
+spec:
+  params:
+    - name: app-name
+      description: Name of the Application (and of the service, e.g. svc1).
+    - name: hub-namespace
+      description: Namespace on the hub where the Application is created. Must be allowed by the principal (principal.allowed-namespaces).
+      default: argocd
+    - name: agent-name
+      description: Name of the agent = value of spec.destination.name (destination-based mapping).
+    - name: dest-namespace
+      description: Namespace on the spoke where the chart/manifests are deployed.
+    - name: repo-url
+      description: Git repository with the chart or manifests. Must be reachable from the spoke (repo-server runs there).
+    - name: path
+      description: Path inside the repository.
+    - name: target-revision
+      description: Git revision (tag, branch or SHA). Changing it is what triggers an upgrade.
+      default: HEAD
+    - name: project
+      description: Argo CD AppProject of the Application.
+      default: default
+  results:
+    - name: started-at
+      description: UTC timestamp taken before the Application was applied. The next task only accepts operations started after it.
+  steps:
+    - name: activate
+      # Red Hat UBI Python image. registry.redhat.io needs a pull secret, so the anonymous mirror is used.
+      image: registry.access.redhat.com/ubi9/python-312-minimal:latest
+      securityContext:
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+      env:
+        - name: APP_NAME
+          value: $(params.app-name)
+        - name: HUB_NAMESPACE
+          value: $(params.hub-namespace)
+        - name: AGENT_NAME
+          value: $(params.agent-name)
+        - name: DEST_NAMESPACE
+          value: $(params.dest-namespace)
+        - name: REPO_URL
+          value: $(params.repo-url)
+        - name: SRC_PATH
+          value: $(params.path)
+        - name: TARGET_REVISION
+          value: $(params.target-revision)
+        - name: PROJECT
+          value: $(params.project)
+      script: |
+        #!/usr/bin/env python3
+        import json, os, ssl, sys, time, urllib.error, urllib.request
+
+        SA = "/var/run/secrets/kubernetes.io/serviceaccount"
+        token = open(SA + "/token").read().strip()
+        # TLS is verified against the cluster CA mounted in the pod.
+        ctx = ssl.create_default_context(cafile=SA + "/ca.crt")
+
+        started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        app = {
+            "apiVersion": "argoproj.io/v1alpha1",
+            "kind": "Application",
+            "metadata": {
+                "name": os.environ["APP_NAME"],
+                "namespace": os.environ["HUB_NAMESPACE"],
+                "labels": {"app.kubernetes.io/managed-by": "tenant0-pipeline"},
+                # Subscribe the Application to the analyzer webhook (see bootstrap/argocd-notifications-cm.yaml).
+                "annotations": {
+                    "notifications.argoproj.io/subscribe.tenant0-%s.analyzer" % t: ""
+                    for t in ("running", "succeeded", "failed", "healthy", "degraded")
+                },
+            },
+            "spec": {
+                "project": os.environ["PROJECT"],
+                "source": {
+                    "repoURL": os.environ["REPO_URL"],
+                    "path": os.environ["SRC_PATH"],
+                    "targetRevision": os.environ["TARGET_REVISION"],
+                },
+                # destination.name routes the Application to the agent (destination-based mapping).
+                "destination": {
+                    "name": os.environ["AGENT_NAME"],
+                    "namespace": os.environ["DEST_NAMESPACE"],
+                },
+                "syncPolicy": {
+                    "automated": {},
+                    "syncOptions": ["CreateNamespace=true"],
+                },
+            },
+        }
+        url = (
+            "https://kubernetes.default.svc/apis/argoproj.io/v1alpha1/namespaces/%s/applications/%s"
+            "?fieldManager=tenant0-pipeline&force=true"
+            % (os.environ["HUB_NAMESPACE"], os.environ["APP_NAME"])
+        )
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(app).encode(),
+            method="PATCH",
+            headers={
+                "Authorization": "Bearer " + token,
+                "Content-Type": "application/apply-patch+yaml",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, context=ctx, timeout=30) as r:
+                print("Application applied, HTTP", r.status)
+        except urllib.error.HTTPError as e:
+            # The response body is the API status message; it contains no secrets.
+            print("Apply failed: HTTP", e.code, e.read().decode()[:500])
+            sys.exit(1)
+
+        with open("$(results.started-at.path)", "w") as f:
+            f.write(started)
+---
+# Task "argocd-wait": waits until the Application finished an upgrade operation successfully.
+# Success = operationState.phase=Succeeded AND sync=Synced AND health=Healthy,
+# and the operation started after the "activate" task ran (so an old result is never accepted).
+# Limitation: if nothing changed, Argo CD starts no operation and this task ends with a timeout.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: argocd-wait
+  namespace: tenant0-pipeline
+spec:
+  params:
+    - name: app-name
+      description: Name of the Application to watch.
+    - name: hub-namespace
+      description: Namespace of the Application on the hub.
+      default: argocd
+    - name: started-at
+      description: Result "started-at" of the activate task.
+    - name: timeout-seconds
+      description: Maximum time to wait for the operation (no infinite waits).
+      default: "300"
+    - name: poll-seconds
+      description: Pause between status checks.
+      default: "5"
+  steps:
+    - name: wait
+      image: registry.access.redhat.com/ubi9/python-312-minimal:latest
+      securityContext:
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+      env:
+        - name: APP_NAME
+          value: $(params.app-name)
+        - name: HUB_NAMESPACE
+          value: $(params.hub-namespace)
+        - name: SINCE
+          value: $(params.started-at)
+        - name: TIMEOUT_SECONDS
+          value: $(params.timeout-seconds)
+        - name: POLL_SECONDS
+          value: $(params.poll-seconds)
+      script: |
+        #!/usr/bin/env python3
+        import json, os, ssl, sys, time, urllib.request
+
+        SA = "/var/run/secrets/kubernetes.io/serviceaccount"
+        token = open(SA + "/token").read().strip()
+        ctx = ssl.create_default_context(cafile=SA + "/ca.crt")
+        url = (
+            "https://kubernetes.default.svc/apis/argoproj.io/v1alpha1/namespaces/%s/applications/%s"
+            % (os.environ["HUB_NAMESPACE"], os.environ["APP_NAME"])
+        )
+        since = os.environ["SINCE"]
+        deadline = time.time() + int(os.environ["TIMEOUT_SECONDS"])
+
+        while True:
+            req = urllib.request.Request(url, headers={"Authorization": "Bearer " + token})
+            with urllib.request.urlopen(req, context=ctx, timeout=30) as r:
+                st = json.load(r).get("status", {})
+            op = st.get("operationState", {})
+            phase = op.get("phase", "-")
+            sync = st.get("sync", {}).get("status", "-")
+            health = st.get("health", {}).get("status", "-")
+            op_started = op.get("startedAt", "")
+            fresh = op_started >= since
+            print("phase=%s sync=%s health=%s opStarted=%s fresh=%s" % (phase, sync, health, op_started, fresh), flush=True)
+            if fresh and phase in ("Failed", "Error"):
+                print("Operation failed:", op.get("message", ""))
+                sys.exit(1)
+            if fresh and phase == "Succeeded" and sync == "Synced" and health == "Healthy":
+                print("Upgrade finished successfully, revision", op.get("syncResult", {}).get("revision", "-"))
+                break
+            if time.time() > deadline:
+                print("Timeout waiting for the operation")
+                sys.exit(1)
+            time.sleep(int(os.environ["POLL_SECONDS"]))
+---
+# Task "argocd-rollout": rolls out several Applications in sync-wave order.
+#
+# Why this task exists: the hub has no application-controller, so Argo CD cannot order
+# separate Applications by itself. This task does it: it groups the apps by "wave", and for
+# each wave (lowest number first) it applies all Applications of that wave, waits until ALL of
+# them finished successfully, and only then starts the next wave. Apps in the same wave run in
+# parallel. The first failed app or the timeout stops the whole rollout (later waves never start).
+#
+# Success of one app = operationState.phase=Succeeded AND sync=Synced AND health=Healthy, and the
+# operation started after this app was applied (an old result is never accepted).
+# Limitation: if nothing changed for an app, Argo CD starts no operation and the wave times out.
+#
+# Parameter "apps" is a JSON array of objects:
+#   name      (required) Application name, a DNS label, e.g. "app21".
+#   wave      (required) integer; lower waves run first; may be negative.
+#   path      (optional) path in the repo.            Default: apps/<name>
+#   namespace (optional) namespace on the spoke.      Default: tenant0-<name>
+#   revision  (optional) git revision of this app.    Default: param default-target-revision
+# Example:
+#   [{"name":"app21","wave":0,"revision":"v36"},{"name":"app22","wave":1,"revision":"v37"}]
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: argocd-rollout
+  namespace: tenant0-pipeline
+spec:
+  params:
+    - name: apps
+      description: JSON array of apps to roll out, see the header of this Task.
+    - name: agent-name
+      description: Agent (spoke cluster) = spec.destination.name of every Application (destination-based mapping).
+    - name: repo-url
+      description: Git repository with the apps. Must be reachable from the spoke (repo-server runs there).
+    - name: default-target-revision
+      description: Revision used by apps that do not set "revision". Changing it triggers an upgrade.
+      default: HEAD
+    - name: hub-namespace
+      description: Namespace on the hub where the Applications are created. Must be allowed by principal.allowed-namespaces.
+      default: argocd
+    - name: project
+      description: Argo CD AppProject of the Applications.
+      default: default
+    - name: timeout-seconds
+      description: Maximum time to wait for ONE wave (no infinite waits).
+      default: "300"
+    - name: poll-seconds
+      description: Pause between status checks.
+      default: "5"
+  steps:
+    - name: rollout
+      # Red Hat UBI Python image. registry.redhat.io needs a pull secret, so the anonymous mirror is used.
+      image: registry.access.redhat.com/ubi9/python-312-minimal:latest
+      securityContext:
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+      env:
+        - name: APPS
+          value: $(params.apps)
+        - name: AGENT_NAME
+          value: $(params.agent-name)
+        - name: REPO_URL
+          value: $(params.repo-url)
+        - name: DEFAULT_REVISION
+          value: $(params.default-target-revision)
+        - name: HUB_NAMESPACE
+          value: $(params.hub-namespace)
+        - name: PROJECT
+          value: $(params.project)
+        - name: TIMEOUT_SECONDS
+          value: $(params.timeout-seconds)
+        - name: POLL_SECONDS
+          value: $(params.poll-seconds)
+      script: |
+        #!/usr/bin/env python3
+        import json, os, re, ssl, sys, time, urllib.error, urllib.request
+
+        SA = "/var/run/secrets/kubernetes.io/serviceaccount"
+        token = open(SA + "/token").read().strip()
+        # TLS is verified against the cluster CA mounted in the pod.
+        ctx = ssl.create_default_context(cafile=SA + "/ca.crt")
+        NS = os.environ["HUB_NAMESPACE"]
+        BASE = "https://kubernetes.default.svc/apis/argoproj.io/v1alpha1/namespaces/%s/applications" % NS
+        NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$")
+
+        def fail(msg):
+            print("ERROR:", msg, flush=True)
+            sys.exit(1)
+
+        # ---- validate the input (allowlist) ----
+        try:
+            apps = json.loads(os.environ["APPS"])
+        except ValueError:
+            fail("param 'apps' is not valid JSON")
+        if not isinstance(apps, list) or not apps:
+            fail("param 'apps' must be a non-empty JSON array")
+        seen = set()
+        for a in apps:
+            if not isinstance(a, dict) or not NAME_RE.match(str(a.get("name", ""))):
+                fail("every app needs a 'name' that is a valid DNS label: %r" % (a,))
+            if a["name"] in seen:
+                fail("duplicate app name: " + a["name"])
+            seen.add(a["name"])
+            if type(a.get("wave")) is not int:
+                fail("app %s: 'wave' must be an integer" % a["name"])
+            ns = a.get("namespace", "tenant0-" + a["name"])
+            if not NAME_RE.match(ns):
+                fail("app %s: invalid namespace %r" % (a["name"], ns))
+
+        def api(method, url, body=None, ctype=None):
+            headers = {"Authorization": "Bearer " + token}
+            if ctype:
+                headers["Content-Type"] = ctype
+            req = urllib.request.Request(url, data=body, method=method, headers=headers)
+            with urllib.request.urlopen(req, context=ctx, timeout=30) as r:
+                return json.load(r)
+
+        def apply_app(a):
+            name = a["name"]
+            app = {
+                "apiVersion": "argoproj.io/v1alpha1",
+                "kind": "Application",
+                "metadata": {
+                    "name": name,
+                    "namespace": NS,
+                    "labels": {"app.kubernetes.io/managed-by": "tenant0-pipeline"},
+                    "annotations": dict(
+                        {"argocd.argoproj.io/sync-wave": str(a["wave"])},
+                        # Subscribe to the analyzer webhook (see bootstrap/argocd-notifications-cm.yaml).
+                        **{"notifications.argoproj.io/subscribe.tenant0-%s.analyzer" % t: ""
+                           for t in ("running", "succeeded", "failed", "healthy", "degraded")}
+                    ),
+                },
+                "spec": {
+                    "project": os.environ["PROJECT"],
+                    "source": {
+                        "repoURL": os.environ["REPO_URL"],
+                        "path": a.get("path", "apps/" + name),
+                        "targetRevision": a.get("revision", os.environ["DEFAULT_REVISION"]),
+                    },
+                    # destination.name routes the Application to the agent (destination-based mapping).
+                    "destination": {
+                        "name": os.environ["AGENT_NAME"],
+                        "namespace": a.get("namespace", "tenant0-" + name),
+                    },
+                    "syncPolicy": {"automated": {}, "syncOptions": ["CreateNamespace=true"]},
+                },
+            }
+            started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            try:
+                api("PATCH", "%s/%s?fieldManager=tenant0-pipeline&force=true" % (BASE, name),
+                    json.dumps(app).encode(), "application/apply-patch+yaml")
+            except urllib.error.HTTPError as e:
+                # The response body is the API status message; it contains no secrets.
+                fail("apply of %s failed: HTTP %s %s" % (name, e.code, e.read().decode()[:300]))
+            return started
+
+        def check(name, since):
+            """Returns 'ok', 'failed' or 'wait' for one app."""
+            st = api("GET", "%s/%s" % (BASE, name)).get("status", {})
+            op = st.get("operationState", {})
+            phase = op.get("phase", "-")
+            sync = st.get("sync", {}).get("status", "-")
+            health = st.get("health", {}).get("status", "-")
+            fresh = op.get("startedAt", "") >= since
+            print("  %s: phase=%s sync=%s health=%s fresh=%s" % (name, phase, sync, health, fresh), flush=True)
+            if fresh and phase in ("Failed", "Error"):
+                print("  %s: operation failed: %s" % (name, op.get("message", "")), flush=True)
+                return "failed"
+            if fresh and phase == "Succeeded" and sync == "Synced" and health == "Healthy":
+                return "ok"
+            return "wait"
+
+        # ---- roll out wave by wave ----
+        for wave in sorted({a["wave"] for a in apps}):
+            members = [a for a in apps if a["wave"] == wave]
+            print("== wave %d: %s" % (wave, ", ".join(a["name"] for a in members)), flush=True)
+            pending = {a["name"]: apply_app(a) for a in members}
+            deadline = time.time() + int(os.environ["TIMEOUT_SECONDS"])
+            while pending:
+                for name, since in list(pending.items()):
+                    res = check(name, since)
+                    if res == "failed":
+                        fail("wave %d: %s failed, later waves are not started" % (wave, name))
+                    if res == "ok":
+                        del pending[name]
+                if not pending:
+                    break
+                if time.time() > deadline:
+                    fail("wave %d: timeout, still waiting for: %s" % (wave, ", ".join(pending)))
+                time.sleep(int(os.environ["POLL_SECONDS"]))
+            print("== wave %d finished" % wave, flush=True)
+        print("Rollout finished successfully", flush=True)
+---
+# Task "argocd-parent": creates or updates the PARENT Application (app-of-apps) on the hub.
+#
+# The parent renders the chart app-of-apps-agent, which creates the child Applications in
+# sync-wave order. The parent is reconciled by the application-controller ON THE HUB
+# (bootstrap/application-controller.yaml), so sync-wave is honoured and the parent waits for each
+# wave to be Healthy. The children are routed to the agent by spec.destination.name.
+#
+# The parent must NOT carry the label argocd-agent=true. The principal would treat it as an
+# agent application and try to send it to an agent called "in-cluster".
+# Idempotent: server-side apply, so re-running with the same params is safe.
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: argocd-parent
+  namespace: tenant0-pipeline
+spec:
+  params:
+    - name: parent-name
+      description: Name of the parent Application on the hub, e.g. tenant0-spoke1-tenant0.
+    - name: agent-name
+      description: Agent (spoke cluster) = spec.destination.name of every child. Passed to the chart as value "agent".
+    - name: repo-url
+      description: Git repository with the chart and the child apps. Must be reachable from the spoke.
+    - name: target-revision
+      description: Git tag of the whole upgrade. Used for the parent AND as the default revision of the children (value "version"). Changing it triggers the upgrade.
+    - name: chart-path
+      description: Path of the parent chart in the repository.
+      default: app-of-apps-agent
+    - name: hub-namespace
+      description: Namespace on the hub where the parent and the children are created.
+      default: argocd
+    - name: project
+      description: Argo CD AppProject of the parent.
+      default: default
+  results:
+    - name: started-at
+      description: UTC timestamp taken before the parent was applied. The next task only accepts operations started after it.
+  steps:
+    - name: parent
+      image: registry.access.redhat.com/ubi9/python-312-minimal:latest
+      securityContext:
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+      env:
+        - name: PARENT_NAME
+          value: $(params.parent-name)
+        - name: AGENT_NAME
+          value: $(params.agent-name)
+        - name: REPO_URL
+          value: $(params.repo-url)
+        - name: TARGET_REVISION
+          value: $(params.target-revision)
+        - name: CHART_PATH
+          value: $(params.chart-path)
+        - name: HUB_NAMESPACE
+          value: $(params.hub-namespace)
+        - name: PROJECT
+          value: $(params.project)
+      script: |
+        #!/usr/bin/env python3
+        import json, os, re, ssl, sys, time, urllib.error, urllib.request
+
+        SA = "/var/run/secrets/kubernetes.io/serviceaccount"
+        token = open(SA + "/token").read().strip()
+        # TLS is verified against the cluster CA mounted in the pod.
+        ctx = ssl.create_default_context(cafile=SA + "/ca.crt")
+
+        # Allowlist validation of the values that end up in object names and Helm parameters.
+        NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$")
+        REV_RE = re.compile(r"^[A-Za-z0-9._/-]{1,100}$")
+        for var in ("PARENT_NAME", "AGENT_NAME", "HUB_NAMESPACE"):
+            if not NAME_RE.match(os.environ[var]):
+                print("ERROR: invalid value of", var); sys.exit(1)
+        if not REV_RE.match(os.environ["TARGET_REVISION"]):
+            print("ERROR: invalid target-revision"); sys.exit(1)
+
+        started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        app = {
+            "apiVersion": "argoproj.io/v1alpha1",
+            "kind": "Application",
+            "metadata": {
+                "name": os.environ["PARENT_NAME"],
+                "namespace": os.environ["HUB_NAMESPACE"],
+                # No argocd-agent label on purpose (see the header of this Task).
+                "labels": {"app.kubernetes.io/managed-by": "tenant0-pipeline"},
+            },
+            "spec": {
+                "project": os.environ["PROJECT"],
+                "source": {
+                    "repoURL": os.environ["REPO_URL"],
+                    "path": os.environ["CHART_PATH"],
+                    "targetRevision": os.environ["TARGET_REVISION"],
+                    "helm": {"parameters": [
+                        {"name": "agent", "value": os.environ["AGENT_NAME"]},
+                        {"name": "repoURL", "value": os.environ["REPO_URL"]},
+                        {"name": "version", "value": os.environ["TARGET_REVISION"]},
+                    ]},
+                },
+                # The parent is deployed to the HUB itself: its resources are the child Applications.
+                "destination": {
+                    "server": "https://kubernetes.default.svc",
+                    "namespace": os.environ["HUB_NAMESPACE"],
+                },
+                # selfHeal is off on purpose: the principal writes status/metadata of the children,
+                # and the parent must not fight with it.
+                "syncPolicy": {"automated": {"prune": True, "selfHeal": False}},
+            },
+        }
+        url = (
+            "https://kubernetes.default.svc/apis/argoproj.io/v1alpha1/namespaces/%s/applications/%s"
+            "?fieldManager=tenant0-pipeline&force=true"
+            % (os.environ["HUB_NAMESPACE"], os.environ["PARENT_NAME"])
+        )
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(app).encode(),
+            method="PATCH",
+            headers={"Authorization": "Bearer " + token, "Content-Type": "application/apply-patch+yaml"},
+        )
+        try:
+            with urllib.request.urlopen(req, context=ctx, timeout=30) as r:
+                print("Parent applied, HTTP", r.status)
+        except urllib.error.HTTPError as e:
+            # The response body is the API status message; it contains no secrets.
+            print("Apply failed: HTTP", e.code, e.read().decode()[:500])
+            sys.exit(1)
+
+        with open("$(results.started-at.path)", "w") as f:
+            f.write(started)

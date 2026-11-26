@@ -1,0 +1,36 @@
+# Additional NetworkPolicy (the stock "argocd-agent-redis-proxy" stays untouched).
+# Why: the stock policy allows ingress to the principal only from agent pods in the
+# SAME namespace (argocd). In this vcluster setup the agent pod is synced to the host
+# namespace "spoke1-tenant0", so k3s' network policy controller drops its traffic.
+# Policies are additive, so this one only ADDS an allowed source.
+#
+# Configurable values:
+#   metadata.namespace            - namespace of the principal (hub Argo CD namespace)
+#   spec.podSelector              - selects the principal pod
+#   namespaceSelector (name)      - host namespace where the vcluster agent pod runs
+#   podSelector (component/part-of) - labels of the agent pod
+#   ports[].port                  - principal gRPC port (8443)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: argocd-agent-principal-from-spoke
+  namespace: argocd
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: principal
+      app.kubernetes.io/name: argocd-agent-principal
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: spoke1-tenant0
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: agent
+              app.kubernetes.io/part-of: argocd-agent
+      ports:
+        - port: 8443
+          protocol: TCP

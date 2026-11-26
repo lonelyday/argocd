@@ -1,0 +1,35 @@
+# Trigger for the app-of-apps pipeline "tenant0-parent-upgrade". In the target architecture k8-wrapper
+# creates this object. Create with:  kubectl --context k3s create -f 31-pipelinerun-parent.yaml
+#
+# The order of the apps (app21, then app22) is NOT set here. It is the sync-wave in
+# app-of-apps-agent/values.yaml of the git tag given in "target-revision". To change the order or add
+# an app: edit that file, push a NEW tag, and put the tag below.
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: tenant0-parent-upgrade-
+  namespace: tenant0-pipeline
+spec:
+  pipelineRef:
+    name: tenant0-parent-upgrade
+  taskRunTemplate:
+    serviceAccountName: tenant0-pipeline
+  # Upper bound for the whole run, so a stuck upgrade does not wait forever.
+  timeouts:
+    pipeline: 30m
+  params:
+    # Name of the parent Application on the hub.
+    - name: parent-name
+      value: tenant0-spoke1-tenant0
+    # Agent = spoke cluster that receives the children (spec.destination.name).
+    - name: agent-name
+      value: spoke1-tenant0
+    # Git repository with the chart and the apps. Must be reachable from the spoke.
+    - name: repo-url
+      value: https://github.com/lonelyday/argocd.git
+    # Git tag of the upgrade. It must contain app-of-apps-agent/, apps/app21 and apps/app22.
+    - name: target-revision
+      value: v37
+    # Maximum time to wait for ALL waves.
+    - name: wait-timeout-seconds
+      value: "900"

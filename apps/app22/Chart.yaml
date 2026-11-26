@@ -1,0 +1,14 @@
+# app22: second test application, rolled out AFTER app21 (sync wave 1 vs. wave 0 of app21).
+#
+# It is a plain Apache httpd Deployment without hooks. Its only purpose is to prove that the
+# pipeline starts it only after app21 (wave 0) finished successfully.
+# The wave is NOT defined here: it is set per run in the "apps" parameter of the PipelineRun.
+#
+# Image: registry.redhat.io/rhel9/redis-7 would need a pull secret, so the anonymous
+# ubi9/httpd-24 from registry.access.redhat.com is used as the "second service".
+apiVersion: v2
+name: tenant0-app22
+description: Test application app22 - one Apache httpd Deployment with readiness, liveness and startup probes. Rolled out after app21.
+type: application
+version: 0.1.0
+appVersion: "2.4"

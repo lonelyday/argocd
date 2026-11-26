@@ -1,0 +1,100 @@
+# Argo CD Notifications configuration for the HUB (plain Argo CD, no OpenShift operator).
+# Apply with server-side apply so that the ConfigMap created by the Argo CD install is only extended:
+#   kubectl --context k3s apply --server-side --force-conflicts -f argocd-notifications-cm.yaml
+#
+# Flow: the hub Application status (filled in by the argocd agent from the spoke) triggers
+# a webhook to the analyzer, which prints what changed (phases, hooks, resources).
+#
+# service.webhook.analyzer  URL of the analyzer inside the hub cluster (no authentication, test only).
+# template.tenant0-status   JSON body sent to the analyzer; only fields that exist in the Application.
+#                           "tasks" = status.operationState.syncResult.resources, with syncPhase
+#                           (PreSync/Sync/PostSync) and hookPhase of every hook and resource.
+# trigger.tenant0-running   every change of the operation or of any task hookPhase (oncePer fingerprint).
+# trigger.tenant0-succeeded operation phase Succeeded.
+# trigger.tenant0-failed    operation phase Failed or Error (includes failed hooks).
+# trigger.tenant0-healthy   Succeeded and Healthy, once per operation.
+# trigger.tenant0-degraded  Succeeded but Degraded (for example a plain Job that failed).
+# An Application subscribes with annotations notifications.argoproj.io/subscribe.<trigger>.analyzer
+# (the argocd-activate task adds them).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-notifications-cm
+  namespace: argocd
+data:
+  service.webhook.analyzer: |
+    url: http://analyzer.tenant0-receiver.svc:8080
+
+  template.tenant0-status: |
+    webhook:
+      analyzer:
+        method: POST
+        path: /argocd/{{.app.metadata.name}}
+        body: |
+          {
+            "sentAt": "{{ dateInZone "2006-01-02T15:04:05Z" now "UTC" }}",
+            "app": "{{.app.metadata.name}}",
+            "cluster": "{{ dig "spec" "destination" "name" "" .app }}",
+            "labels": {{ .app.metadata.labels | default dict | toJson }},
+            "syncWave": "{{ get (.app.metadata.annotations | default dict) "argocd.argoproj.io/sync-wave" }}",
+            "resourceVersion": "{{.app.metadata.resourceVersion}}",
+            "generation": {{ .app.metadata.generation | default 0 }},
+            "targetRevision": "{{.app.spec.source.targetRevision}}",
+            "revision": "{{ dig "status" "operationState" "syncResult" "revision" "" .app }}",
+            "initiatedBy": {{ dig "status" "operationState" "operation" "initiatedBy" dict .app | toJson }},
+            "operation": "{{ .app.status.operationState.phase | default "" }}",
+            "operationMessage": {{ .app.status.operationState.message | default "" | toString | quote }},
+            "operationStartedAt": "{{ .app.status.operationState.startedAt | default "" }}",
+            "operationFinishedAt": "{{ .app.status.operationState.finishedAt | default "" }}",
+            "retryCount": {{ .app.status.operationState.retryCount | default 0 }},
+            "sync": "{{ .app.status.sync.status | default "" }}",
+            "health": "{{ .app.status.health.status | default "" }}",
+            "healthSince": "{{ .app.status.health.lastTransitionTime | default "" }}",
+            "conditions": {{ .app.status.conditions | default list | toJson }},
+            "tasks": {{ with .app.status.operationState.syncResult }}{{ .resources | default list | toJson }}{{ else }}[]{{ end }},
+            "resources": {{ .app.status.resources | default list | toJson }}
+          }
+
+  trigger.tenant0-running: |
+    - when: app.status?.operationState?.phase in ['Running']
+      oncePer: app.status.operationState.startedAt + "/" + string(app.status.operationState.retryCount ?? 0) + "/" + join(map(app.status.operationState.syncResult?.resources ?? [], {.name + "=" + (.hookPhase ?? "-")}), ",")
+      send: [tenant0-status]
+  trigger.tenant0-succeeded: |
+    - when: app.status?.operationState?.phase in ['Succeeded']
+      send: [tenant0-status]
+  trigger.tenant0-failed: |
+    - when: app.status?.operationState?.phase in ['Error', 'Failed']
+      send: [tenant0-status]
+  trigger.tenant0-healthy: |
+    - when: app.status?.operationState?.phase in ['Succeeded'] && app.status?.health?.status == 'Healthy'
+      oncePer: app.status.operationState.startedAt
+      send: [tenant0-status]
+  trigger.tenant0-degraded: |
+    - when: app.status?.operationState?.phase in ['Succeeded'] && app.status?.health?.status == 'Degraded'
+      send: [tenant0-status]
+---
+# The notifications controller watches Applications in all namespaces (application.namespaces: "*"),
+# which needs cluster-wide read access. The Role from the Argo CD install is namespaced only,
+# so the controller logs "cannot list resource applications at the cluster scope".
+# Notifications also write the "notified.*" annotation back, hence update/patch.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: argocd-notifications-controller-apps
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications", "appprojects"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argocd-notifications-controller-apps
+subjects:
+  - kind: ServiceAccount
+    name: argocd-notifications-controller
+    namespace: argocd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: argocd-notifications-controller-apps

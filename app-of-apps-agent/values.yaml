@@ -1,0 +1,41 @@
+# Values of the app-of-apps-agent chart.
+# They are DEFAULTS so that "helm3 template" works by hand; the pipeline overrides them
+# (helm parameters in the parent Application, see pipeline/10-tasks.yaml, Task argocd-parent).
+
+# Exact name of the agent = spec.destination.name of every child (destination-based mapping).
+agent: spoke1-tenant0
+
+# Git repository with the child apps. Must be reachable from the spoke (repo-server runs there).
+repoURL: https://github.com/lonelyday/argocd.git
+
+# Default git revision (tag) tracked by children that do not set "revision". The tag must exist in the repo
+# and contain apps/app21 and apps/app22 (app22 first appears in v37).
+# Changing it changes the children's spec, which is what starts an upgrade.
+version: v37
+
+# Argo CD AppProject of the children.
+project: default
+
+# Children in the order of execution. Lower wave first; the parent applies the next wave
+# only after every child of the previous wave is Healthy (needs the Application health check,
+# bootstrap/argocd-cm-health-check.yaml).
+#   name       (required) Application name on the hub.
+#   wave       (required) sync-wave number (integer, may be negative).
+#   path       (required) directory with the chart/manifests in the repo.
+#   namespace  (required) target namespace ON THE SPOKE (created by CreateNamespace=true).
+#   revision   (optional) git revision of this child; default = .Values.version.
+#   retryLimit (optional) spec.syncPolicy.retry.limit; without it Argo CD uses its default (5).
+#   notify     (optional) true = subscribe to the analyzer webhook (annotations).
+apps:
+  # app21: PreSync hook + nginx Deployment + PostSync health check. Wave 0 = first.
+  - name: app21
+    wave: 0
+    path: apps/app21
+    namespace: tenant0-app21
+    notify: true
+  # app22: httpd Deployment. Wave 1 = starts only after app21 is Healthy.
+  - name: app22
+    wave: 1
+    path: apps/app22
+    namespace: tenant0-app22
+    notify: true

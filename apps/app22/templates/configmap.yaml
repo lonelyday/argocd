@@ -1,0 +1,45 @@
+# app22, httpd configuration and the served files. Mounted read-only into the httpd container.
+#
+# Why a custom config: the stock image config writes to paths that are read-only here.
+# This file keeps the pid file in /tmp, logs to stdout/stderr and serves two files from the
+# ConfigMap:
+#   /healthz  "ok"  -> target of startup, readiness and liveness probes
+#   /         text  -> the "application"
+# TypesConfig /dev/null + ForceType text/plain: no mime.types file is needed.
+#
+# The label tenant0/chart-version carries the chart version on purpose. A change of
+# targetRevision alone does not start an Argo CD operation when the rendered manifests are
+# identical (see HANDOFF.md section 6), so every chart version changes at least this label.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tenant0-app22-httpd-conf
+  labels:
+    tenant0/chart-version: {{ .Chart.Version | quote }}
+data:
+  httpd.conf: |
+    ServerRoot "/etc/httpd"
+    PidFile /tmp/httpd.pid
+    Listen 8080
+    LoadModule mpm_event_module modules/mod_mpm_event.so
+    LoadModule authz_core_module modules/mod_authz_core.so
+    LoadModule dir_module modules/mod_dir.so
+    LoadModule mime_module modules/mod_mime.so
+    LoadModule log_config_module modules/mod_log_config.so
+    LoadModule unixd_module modules/mod_unixd.so
+    ErrorLog /dev/stderr
+    LogLevel warn
+    LogFormat "%h %r %>s" common
+    CustomLog /dev/stdout common
+    ServerName localhost
+    TypesConfig /dev/null
+    DocumentRoot "/etc/httpd-www"
+    <Directory "/etc/httpd-www">
+      Require all granted
+      ForceType text/plain
+    </Directory>
+    DirectoryIndex index.txt
+  healthz: |
+    ok
+  index.txt: |
+    tenant0 app22 httpd {{ .Chart.Version }}

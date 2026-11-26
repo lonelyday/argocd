@@ -1,0 +1,43 @@
+# Example trigger for the universal pipeline "tenant0-rollout". In the target architecture k8-wrapper
+# creates this object (the UI -> k8-wrapper -> PipelineRun flow).
+# Create with:  kubectl --context k3s create -f 30-pipelinerun.yaml   (generateName requires "create", not "apply")
+#
+# The apps are rolled out wave by wave: the LOWEST wave first. All apps of one wave start together;
+# the next wave starts only after every app of the previous wave finished successfully
+# (operation Succeeded, Synced, Healthy). A failed app or a timeout stops the whole run.
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: tenant0-rollout-
+  namespace: tenant0-pipeline
+spec:
+  pipelineRef:
+    name: tenant0-rollout
+  taskRunTemplate:
+    serviceAccountName: tenant0-pipeline
+  # Upper bound for the whole run, so a stuck rollout does not wait forever.
+  timeouts:
+    pipeline: 20m
+  params:
+    # JSON array of apps. Per app:
+    #   name      (required) Application name, e.g. app21.
+    #   wave      (required) integer; lower runs first.
+    #   revision  (optional) git revision of this app; default = default-target-revision.
+    #   path      (optional) path in the repo;        default = apps/<name>.
+    #   namespace (optional) namespace on the spoke;  default = tenant0-<name>.
+    # To add an app, add one object here; nothing else has to change.
+    - name: apps
+      value: |
+        [
+          {"name": "app21", "wave": 11, "revision": "v36"},
+          {"name": "app22", "wave": 12, "revision": "v37"}
+        ]
+    # Agent = spoke cluster that receives every Application (spec.destination.name).
+    - name: agent-name
+      value: spoke1-tenant0
+    # Git repository with the apps. Must be reachable from the spoke.
+    - name: repo-url
+      value: https://github.com/lonelyday/argocd.git
+    # Maximum time to wait for ONE wave.
+    - name: wave-timeout-seconds
+      value: "300"

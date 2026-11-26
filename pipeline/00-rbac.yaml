@@ -1,0 +1,41 @@
+# Namespace where the Tekton PipelineRuns of the control plane (hub) are executed.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant0-pipeline
+---
+# ServiceAccount used by every task pod of the pipeline.
+# Its token is what the tasks use to call the Kubernetes API of the hub.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tenant0-pipeline
+  namespace: tenant0-pipeline
+---
+# Least privilege: the pipeline may only manage Application objects,
+# and only in the namespace where the argocd-agent principal watches them.
+# "argocd" must match principal.allowed-namespaces of the principal.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tenant0-pipeline-applications
+  namespace: argocd
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    # create/patch -> "activate" (server-side apply), get/list/watch -> status polling.
+    verbs: ["get", "list", "watch", "create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tenant0-pipeline-applications
+  namespace: argocd
+subjects:
+  - kind: ServiceAccount
+    name: tenant0-pipeline
+    namespace: tenant0-pipeline
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: tenant0-pipeline-applications

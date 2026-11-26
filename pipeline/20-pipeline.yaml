@@ -1,0 +1,139 @@
+# Pipeline from the diagram: "activate" creates the Application on the hub,
+# "svc1" waits for the upgrade result reported back by the argocd agent.
+# svc2/svc3 from the diagram would be further argocd-activate + argocd-wait pairs chained with runAfter.
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: tenant0-upgrade
+  namespace: tenant0-pipeline
+spec:
+  params:
+    - name: app-name
+      description: Service name, also the Application name (e.g. svc1).
+    - name: agent-name
+      description: Agent (spoke cluster) that receives the Application.
+    - name: dest-namespace
+      description: Namespace on the spoke where the service is deployed.
+    - name: repo-url
+      description: Git repository of the service chart/manifests.
+    - name: path
+      description: Path in the repository.
+    - name: target-revision
+      description: Revision to deploy. Changing it triggers the upgrade.
+      default: HEAD
+    - name: wait-timeout-seconds
+      description: How long to wait for the upgrade to finish.
+      default: "300"
+  tasks:
+    - name: activate
+      taskRef:
+        name: argocd-activate
+      params:
+        - name: app-name
+          value: $(params.app-name)
+        - name: agent-name
+          value: $(params.agent-name)
+        - name: dest-namespace
+          value: $(params.dest-namespace)
+        - name: repo-url
+          value: $(params.repo-url)
+        - name: path
+          value: $(params.path)
+        - name: target-revision
+          value: $(params.target-revision)
+    - name: svc1
+      runAfter: ["activate"]
+      taskRef:
+        name: argocd-wait
+      params:
+        - name: app-name
+          value: $(params.app-name)
+        - name: started-at
+          value: $(tasks.activate.results.started-at)
+        - name: timeout-seconds
+          value: $(params.wait-timeout-seconds)
+---
+# Universal pipeline: rolls out any list of apps in sync-wave order (see Task argocd-rollout).
+# The PipelineRun decides WHICH apps and in WHICH wave; this pipeline does not change.
+# Tekton pipelines are static graphs, so the ordering is done inside the one task.
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: tenant0-rollout
+  namespace: tenant0-pipeline
+spec:
+  params:
+    - name: apps
+      description: 'JSON array, e.g. [{"name":"app21","wave":0,"revision":"v36"},{"name":"app22","wave":1,"revision":"v37"}]. Lower wave runs first.'
+    - name: agent-name
+      description: Agent (spoke cluster) that receives the Applications.
+    - name: repo-url
+      description: Git repository of the apps.
+    - name: default-target-revision
+      description: Revision for apps that do not set "revision".
+      default: HEAD
+    - name: wave-timeout-seconds
+      description: How long to wait for ONE wave to finish.
+      default: "300"
+  tasks:
+    - name: rollout
+      taskRef:
+        name: argocd-rollout
+      params:
+        - name: apps
+          value: $(params.apps)
+        - name: agent-name
+          value: $(params.agent-name)
+        - name: repo-url
+          value: $(params.repo-url)
+        - name: default-target-revision
+          value: $(params.default-target-revision)
+        - name: timeout-seconds
+          value: $(params.wave-timeout-seconds)
+---
+# Pipeline for the app-of-apps pattern: "parent" creates the parent Application, "wait" waits until
+# the parent finished. The ORDER of the children is NOT defined here: it is the sync-wave of the
+# children in the chart app-of-apps-agent (values.yaml), honoured by the application-controller on the hub.
+# The parent is Healthy only when every child (all waves) is Synced and Healthy on the spoke.
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: tenant0-parent-upgrade
+  namespace: tenant0-pipeline
+spec:
+  params:
+    - name: parent-name
+      description: Name of the parent Application, e.g. tenant0-spoke1-tenant0.
+    - name: agent-name
+      description: Agent (spoke cluster) that receives the children.
+    - name: repo-url
+      description: Git repository of the chart and the child apps.
+    - name: target-revision
+      description: Git tag of the whole upgrade. Changing it triggers the upgrade.
+    - name: wait-timeout-seconds
+      description: How long to wait for the whole upgrade (all waves).
+      default: "900"
+  tasks:
+    - name: parent
+      taskRef:
+        name: argocd-parent
+      params:
+        - name: parent-name
+          value: $(params.parent-name)
+        - name: agent-name
+          value: $(params.agent-name)
+        - name: repo-url
+          value: $(params.repo-url)
+        - name: target-revision
+          value: $(params.target-revision)
+    - name: wait
+      runAfter: ["parent"]
+      taskRef:
+        name: argocd-wait
+      params:
+        - name: app-name
+          value: $(params.parent-name)
+        - name: started-at
+          value: $(tasks.parent.results.started-at)
+        - name: timeout-seconds
+          value: $(params.wait-timeout-seconds)

@@ -1,0 +1,8 @@
+# Values of the app22 chart. Edit them BEFORE the chart is deployed.
+
+# Image of the httpd Deployment. Public Red Hat image (anonymous mirror, no pull secret).
+# Runs as the non-root user 1001.
+image: registry.access.redhat.com/ubi9/httpd-24:latest
+
+# Number of httpd pods.
+replicas: 1

@@ -1,0 +1,52 @@
+# Child Applications. They live on the HUB (namespace argocd). The parent Application (which renders
+# this chart) is reconciled by the application-controller on the hub and applies them wave by wave.
+#
+# Each child is then handled by the argocd-agent, NOT by the hub controller:
+#   - spec.destination.name = agent  -> the principal routes it to that agent (destination-based mapping);
+#   - the agent cluster secret has argocd.argoproj.io/skip-reconcile=true -> the hub controller skips it;
+#   - label argocd-agent=true -> required by principal.label-selector, otherwise the principal ignores it.
+#
+# Children MUST have automated sync. Without it they stay in "waiting for first sync" and the parent
+# waits forever.
+{{- range .Values.apps }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .name }}
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ .wave | quote }}
+    {{- if .notify }}
+    # Subscription to the "analyzer" webhook (receiver/analyzer.py, config in argocd-notifications-cm).
+    notifications.argoproj.io/subscribe.tenant0-running.analyzer: ""
+    notifications.argoproj.io/subscribe.tenant0-succeeded.analyzer: ""
+    notifications.argoproj.io/subscribe.tenant0-failed.analyzer: ""
+    notifications.argoproj.io/subscribe.tenant0-healthy.analyzer: ""
+    notifications.argoproj.io/subscribe.tenant0-degraded.analyzer: ""
+    {{- end }}
+  labels:
+    argocd-agent: "true"
+    tenant0/app: {{ .name | quote }}
+spec:
+  project: {{ $.Values.project }}
+  source:
+    repoURL: {{ $.Values.repoURL }}
+    targetRevision: {{ .revision | default $.Values.version }}
+    path: {{ .path }}
+  destination:
+    name: {{ $.Values.agent }}
+    namespace: {{ .namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    {{- if hasKey . "retryLimit" }}
+    # Retry of the whole sync operation of THIS child (not of a single hook).
+    # limit: 0 = no retries, -1 = unlimited.
+    retry:
+      limit: {{ .retryLimit }}
+    {{- end }}
+{{- end }}
